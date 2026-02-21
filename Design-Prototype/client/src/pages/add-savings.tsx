@@ -8,6 +8,7 @@ import { Link } from "wouter";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 type ContributionResponse = {
   currentAmount: number;
@@ -15,12 +16,24 @@ type ContributionResponse = {
   progressPercent: number;
 };
 
+type Contribution = {
+  id: number;
+  amount: number;
+  createdAt: string;
+};
+
 export default function AddSavings() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [amount, setAmount] = useState("");
   const [isSuccess, setIsSuccess] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [updatedProgress, setUpdatedProgress] = useState<ContributionResponse | null>(null);
+  const { data: summary } = useQuery<ContributionResponse>({
+    queryKey: ["/api/savings/summary"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,6 +56,30 @@ export default function AddSavings() {
       });
       const payload: ContributionResponse = await response.json();
       setUpdatedProgress(payload);
+
+      queryClient.setQueryData(["/api/savings/summary"], payload);
+      queryClient.setQueryData<Contribution[] | undefined>(
+        ["/api/savings/contributions?limit=20"],
+        (existing) => [
+          {
+            id: Date.now(),
+            amount: parsedAmount,
+            createdAt: new Date().toISOString(),
+          },
+          ...(existing ?? []),
+        ],
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["/api/savings/summary"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["/api/savings/contributions?limit=20"],
+          refetchType: "all",
+        }),
+      ]);
       setIsSuccess(true);
       setAmount("");
     } catch (error) {
@@ -92,7 +129,7 @@ export default function AddSavings() {
                 <p className="text-primary-foreground/90 text-sm leading-relaxed mb-4">
                   You're currently{" "}
                   <span className="font-bold text-white">
-                    {updatedProgress ? Math.round(updatedProgress.progressPercent) : 57}%
+                    {Math.round((updatedProgress ?? summary)?.progressPercent ?? 57)}%
                   </span>{" "}
                   towards your dream home. This deposit will get you even closer.
                 </p>
@@ -100,7 +137,7 @@ export default function AddSavings() {
                   <div
                     className="bg-white h-full rounded-full shadow-[0_0_10px_rgba(255,255,255,0.5)]"
                     style={{
-                      width: `${updatedProgress ? Math.min(updatedProgress.progressPercent, 100) : 57}%`,
+                      width: `${Math.min((updatedProgress ?? summary)?.progressPercent ?? 57, 100)}%`,
                     }}
                   />
                 </div>

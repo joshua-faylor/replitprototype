@@ -6,6 +6,18 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  app.get("/api/savings/summary", async (_req, res) => {
+    const summary = await storage.getSavingsSummary();
+    return res.json(summary);
+  });
+
+  app.get("/api/savings/contributions", async (req, res) => {
+    const parsedLimit =
+      typeof req.query.limit === "string" ? Number(req.query.limit) : undefined;
+    const contributions = await storage.getRecentContributions(parsedLimit ?? 6);
+    return res.json(contributions);
+  });
+
   app.post("/api/savings/contribute", async (req, res) => {
     const parsedAmount =
       typeof req.body?.amount === "number"
@@ -19,21 +31,7 @@ export async function registerRoutes(
     }
 
     const updatedProgress = await storage.addContribution(parsedAmount);
-    const progressPercent =
-      updatedProgress.goalAmount > 0
-        ? Number(
-            (
-              (updatedProgress.currentAmount / updatedProgress.goalAmount) *
-              100
-            ).toFixed(2),
-          )
-        : 0;
-
-    return res.json({
-      currentAmount: updatedProgress.currentAmount,
-      goalAmount: updatedProgress.goalAmount,
-      progressPercent,
-    });
+    return res.json(updatedProgress);
   });
 
   return httpServer;

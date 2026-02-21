@@ -1,12 +1,14 @@
 import {
   type InsertUser,
+  type SavingsContribution,
   type SavingsProgress,
   type User,
+  savingsContributions,
   savingsProgress,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 
 // modify the interface with any CRUD methods
 // you might need
@@ -16,8 +18,16 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   getSavingsProgress(): Promise<SavingsProgress>;
-  addContribution(amount: number): Promise<SavingsProgress>;
+  addContribution(amount: number): Promise<SavingsSummary>;
+  getSavingsSummary(): Promise<SavingsSummary>;
+  getRecentContributions(limit?: number): Promise<SavingsContribution[]>;
 }
+
+export type SavingsSummary = {
+  currentAmount: number;
+  goalAmount: number;
+  progressPercent: number;
+};
 
 export class MemStorage implements IStorage {
   private users: Map<string, User>;
@@ -43,7 +53,7 @@ export class MemStorage implements IStorage {
     return user;
   }
 
-  private async ensureSavingsProgressTable(): Promise<void> {
+  private async ensureSavingsTables(): Promise<void> {
     await db.execute(sql`
       create table if not exists savings_progress (
         id varchar primary key,
@@ -52,10 +62,18 @@ export class MemStorage implements IStorage {
         updated_at timestamp not null default now()
       )
     `);
+
+    await db.execute(sql`
+      create table if not exists savings_contributions (
+        id serial primary key,
+        amount integer not null,
+        created_at timestamp not null default now()
+      )
+    `);
   }
 
   async getSavingsProgress(): Promise<SavingsProgress> {
-    await this.ensureSavingsProgressTable();
+    await this.ensureSavingsTables();
 
     await db
       .insert(savingsProgress)
@@ -79,8 +97,24 @@ export class MemStorage implements IStorage {
     return progress;
   }
 
-  async addContribution(amount: number): Promise<SavingsProgress> {
-    await this.ensureSavingsProgressTable();
+  private toSummary(progress: SavingsProgress): SavingsSummary {
+    return {
+      currentAmount: progress.currentAmount,
+      goalAmount: progress.goalAmount,
+      progressPercent:
+        progress.goalAmount > 0
+          ? Number(((progress.currentAmount / progress.goalAmount) * 100).toFixed(2))
+          : 0,
+    };
+  }
+
+  async getSavingsSummary(): Promise<SavingsSummary> {
+    const progress = await this.getSavingsProgress();
+    return this.toSummary(progress);
+  }
+
+  async addContribution(amount: number): Promise<SavingsSummary> {
+    await this.ensureSavingsTables();
 
     await db
       .insert(savingsProgress)
@@ -91,7 +125,7 @@ export class MemStorage implements IStorage {
       })
       .onConflictDoNothing();
 
-    const [updated] = await db
+    const [updatedProgress] = await db
       .update(savingsProgress)
       .set({
         currentAmount: sql`${savingsProgress.currentAmount} + ${amount}`,
@@ -100,11 +134,24 @@ export class MemStorage implements IStorage {
       .where(eq(savingsProgress.id, "default"))
       .returning();
 
-    if (!updated) {
+    if (!updatedProgress) {
       throw new Error("Unable to update savings progress");
     }
 
-    return updated;
+    await db.insert(savingsContributions).values({ amount });
+
+    return this.toSummary(updatedProgress);
+  }
+
+  async getRecentContributions(limit = 6): Promise<SavingsContribution[]> {
+    await this.ensureSavingsTables();
+
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 6;
+    return db
+      .select()
+      .from(savingsContributions)
+      .orderBy(desc(savingsContributions.createdAt))
+      .limit(safeLimit);
   }
 }
 

@@ -5,6 +5,7 @@ import {
   integer,
   numeric,
   pgTable,
+  serial,
   smallint,
   text,
   timestamp,
@@ -25,6 +26,12 @@ export const savingsProgress = pgTable("savings_progress", {
   goalAmount: integer("goal_amount").notNull().default(150000),
   currentAmount: integer("current_amount").notNull().default(0),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const savingsContributions = pgTable("savings_contributions", {
+  id: serial("id").primaryKey(),
+  amount: integer("amount").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const homeStyles = pgTable("home_styles", {
@@ -101,6 +108,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 export type SavingsProgress = typeof savingsProgress.$inferSelect;
+export type SavingsContribution = typeof savingsContributions.$inferSelect;
 export type HomeStyle = typeof homeStyles.$inferSelect;
 export type SavingsGoal = typeof savingsGoals.$inferSelect;
 export type BuildPlan = typeof buildPlans.$inferSelect;

@@ -89,15 +89,53 @@ app.use((req, res, next) => {
   // Other ports are firewalled. Default to 5000 if not specified.
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
+  const configuredPort = parseInt(process.env.PORT || "5000", 10);
+  const canRetryPort = process.env.NODE_ENV !== "production";
+  const maxAttempts = canRetryPort ? 10 : 1;
+  const host = "0.0.0.0";
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const port = configuredPort + attempt;
+    const listenOptions = {
       port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
+      host,
+      ...(process.platform !== "win32" ? { reusePort: true } : {}),
+    };
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: NodeJS.ErrnoException) => {
+          httpServer.off("listening", onListening);
+          reject(error);
+        };
+
+        const onListening = () => {
+          httpServer.off("error", onError);
+          resolve();
+        };
+
+        httpServer.once("error", onError);
+        httpServer.once("listening", onListening);
+        try {
+          httpServer.listen(listenOptions);
+        } catch (error) {
+          httpServer.off("error", onError);
+          httpServer.off("listening", onListening);
+          reject(error);
+        }
+      });
+
       log(`serving on port ${port}`);
-    },
-  );
+      break;
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+
+      if (err.code === "EADDRINUSE" && attempt < maxAttempts - 1) {
+        log(`port ${port} is in use; retrying on port ${port + 1}`, "express");
+        continue;
+      }
+
+      throw err;
+    }
+  }
 })();

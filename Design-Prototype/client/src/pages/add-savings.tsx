@@ -2,25 +2,97 @@ import Layout from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiRequest } from "@/lib/queryClient";
 import { X, PiggyBank, Sparkles } from "lucide-react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useToast } from "@/hooks/use-toast";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+type ContributionResponse = {
+  currentAmount: number;
+  goalAmount: number;
+  progressPercent: number;
+};
+
+type Contribution = {
+  id: number;
+  amount: number;
+  createdAt: string;
+};
 
 export default function AddSavings() {
-  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [amount, setAmount] = useState("");
   const [isSuccess, setIsSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [updatedProgress, setUpdatedProgress] = useState<ContributionResponse | null>(null);
+  const { data: summary } = useQuery<ContributionResponse>({
+    queryKey: ["/api/savings/summary"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount) return;
-    
-    // In a real app we'd update state/db, for mockup we'll show success
-    setIsSuccess(true);
-    setTimeout(() => {
-      setLocation("/");
-    }, 2000);
+    if (!amount || isSubmitting) return;
+
+    const parsedAmount = Number(amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      toast({
+        title: "Invalid amount",
+        description: "Please enter an amount greater than 0.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const response = await apiRequest("POST", "/api/savings/contribute", {
+        amount: parsedAmount,
+      });
+      const payload: ContributionResponse = await response.json();
+      setUpdatedProgress(payload);
+
+      queryClient.setQueryData(["/api/savings/summary"], payload);
+      queryClient.setQueryData<Contribution[] | undefined>(
+        ["/api/savings/contributions?limit=20"],
+        (existing) => [
+          {
+            id: Date.now(),
+            amount: parsedAmount,
+            createdAt: new Date().toISOString(),
+          },
+          ...(existing ?? []),
+        ],
+      );
+
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["/api/savings/summary"],
+          refetchType: "all",
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["/api/savings/contributions?limit=20"],
+          refetchType: "all",
+        }),
+      ]);
+      setIsSuccess(true);
+      setAmount("");
+    } catch (error) {
+      const description =
+        error instanceof Error ? error.message : "Could not add contribution.";
+      toast({
+        title: "Contribution failed",
+        description,
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -55,10 +127,19 @@ export default function AddSavings() {
                   <h3 className="font-semibold text-lg">Goal Progress</h3>
                 </div>
                 <p className="text-primary-foreground/90 text-sm leading-relaxed mb-4">
-                  You're currently <span className="font-bold text-white">57%</span> towards your dream home. This deposit will get you even closer.
+                  You're currently{" "}
+                  <span className="font-bold text-white">
+                    {Math.round((updatedProgress ?? summary)?.progressPercent ?? 57)}%
+                  </span>{" "}
+                  towards your dream home. This deposit will get you even closer.
                 </p>
                 <div className="bg-white/10 h-2 w-full rounded-full overflow-hidden">
-                  <div className="bg-white h-full w-[57%] rounded-full shadow-[0_0_10px_rgba(255,255,255,0.5)]" />
+                  <div
+                    className="bg-white h-full rounded-full shadow-[0_0_10px_rgba(255,255,255,0.5)]"
+                    style={{
+                      width: `${Math.min((updatedProgress ?? summary)?.progressPercent ?? 57, 100)}%`,
+                    }}
+                  />
                 </div>
               </div>
               <Sparkles className="absolute -right-4 -bottom-4 w-32 h-32 text-white/5 rotate-12" />
@@ -95,11 +176,11 @@ export default function AddSavings() {
               <div className="flex gap-4 pt-4">
                 <Button 
                   type="submit"
-                  disabled={!amount}
+                  disabled={!amount || isSubmitting}
                   className="flex-1 h-16 text-lg font-bold rounded-2xl shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all" 
                   size="lg"
                 >
-                  Confirm Contribution
+                  {isSubmitting ? "Saving..." : "Confirm Contribution"}
                 </Button>
               </div>
             </form>
@@ -121,12 +202,22 @@ export default function AddSavings() {
               </motion.div>
             </div>
             <h2 className="text-3xl font-serif font-bold mb-2 text-primary">Success!</h2>
-            <p className="text-muted-foreground text-lg mb-8">Your contribution has been added.</p>
+            <p className="text-muted-foreground text-lg mb-3">Your contribution has been added.</p>
+            {updatedProgress && (
+              <div className="mb-8 text-center">
+                <p className="text-foreground text-base font-medium">
+                  Total Saved: ${updatedProgress.currentAmount.toLocaleString()}
+                </p>
+                <p className="text-muted-foreground text-sm">
+                  Goal: ${updatedProgress.goalAmount.toLocaleString()} ({updatedProgress.progressPercent}%)
+                </p>
+              </div>
+            )}
             <div className="w-full max-w-[200px] h-1 bg-muted rounded-full overflow-hidden">
               <motion.div 
                 className="h-full bg-primary"
                 initial={{ width: 0 }}
-                animate={{ width: "100%" }}
+                animate={{ width: `${updatedProgress ? Math.min(updatedProgress.progressPercent, 100) : 100}%` }}
                 transition={{ duration: 2 }}
               />
             </div>

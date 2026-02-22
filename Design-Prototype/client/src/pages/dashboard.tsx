@@ -1,13 +1,24 @@
 import Layout from "@/components/layout";
-import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Card } from "@/components/ui/card";
 import { CheckCircle2, Circle } from "lucide-react";
 import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
+
+type SavingsSummary = {
+  currentAmount: number;
+  goalAmount: number;
+  progressPercent: number;
+};
 
 export default function Dashboard() {
-  const savingsGoal = 150000;
-  const currentSavings = 138000;
+  const { data: summary } = useQuery<SavingsSummary>({
+    queryKey: ["/api/savings/summary"],
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+  const savingsGoal = summary?.goalAmount ?? 150000;
+  const currentSavings = summary?.currentAmount ?? 0;
   const progress = (currentSavings / savingsGoal) * 100;
   
   const milestones = [
